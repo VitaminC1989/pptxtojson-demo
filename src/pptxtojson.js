@@ -12,35 +12,54 @@ import { getShadow } from './shadow'
 import { getTableBorders, getTableCellParams, getTableRowParams } from './table'
 import { RATIO_EMUs_Points } from './constants'
 
+/**
+ * 解析PPTX文件，提取幻灯片信息和内容。
+ * @param {File} file - 需要解析的PPTX文件。
+ * @returns {Promise<{slides: any[], size: {width: number, height: number}}>} - 解析后的结果，包含所有幻灯片的信息和PPTX文件的大小。
+ */
 export async function parse(file) {
-  const slides = []
+  const slides = [] // 用于存储所有解析后的幻灯片信息
   
-  const zip = await JSZip.loadAsync(file)
+  const zip = await JSZip.loadAsync(file) // 使用JSZip库异步加载PPTX文件
 
-  const filesInfo = await getContentTypes(zip)
-  const { width, height, defaultTextStyle } = await getSlideInfo(zip)
-  const themeContent = await loadTheme(zip)
+  const filesInfo = await getContentTypes(zip) // 获取PPTX文件中的内容类型信息
+  const { width, height, defaultTextStyle } = await getSlideInfo(zip) // 获取幻灯片的大小和默认文本样式信息
+  const themeContent = await loadTheme(zip) // 加载PPTX文件的主题信息
 
-  for (const filename of filesInfo.slides) {
-    const singleSlide = await processSingleSlide(zip, filename, themeContent, defaultTextStyle)
-    slides.push(singleSlide)
+  console.log('zip', zip)
+  console.log('filesInfo', filesInfo)
+  console.log('width', width)
+  console.log('height', height)
+  console.log('defaultTextStyle', defaultTextStyle)
+  console.log('themeContent', themeContent)
+
+  for (const filename of filesInfo.slides) { // 遍历所有幻灯片文件
+    const singleSlide = await processSingleSlide(zip, filename, themeContent, defaultTextStyle) // 解析单个幻灯片
+    slides.push(singleSlide) // 将解析后的幻灯片信息添加到数组中
   }
 
   return {
-    slides,
+    slides, // 解析后的所有幻灯片信息
     size: {
-      width,
-      height,
+      width, // PPTX文件的宽度
+      height, // PPTX文件的高度
     },
   }
 }
 
+/**
+ * 获取PPTX文件内容类型
+ * @param {JSZip} zip - JSZip实例
+ * @returns {Promise<{slides: string[], slideLayouts: string[]}>} - 幻灯片和幻灯片布局的文件路径
+ */
 async function getContentTypes(zip) {
+  // 读取[Content_Types].xml文件
   const ContentTypesJson = await readXmlFile(zip, '[Content_Types].xml')
   const subObj = ContentTypesJson['Types']['Override']
   let slidesLocArray = []
   let slideLayoutsLocArray = []
 
+  // 遍历所有Override元素，提取幻灯片和幻灯片布局的文件路径
   for (const item of subObj) {
     switch (item['attrs']['ContentType']) {
       case 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml':
@@ -53,6 +72,7 @@ async function getContentTypes(zip) {
     }
   }
   
+  // 定义排序函数，按照幻灯片编号排序
   const sortSlideXml = (p1, p2) => {
     const n1 = +/(\d+)\.xml/.exec(p1)[1]
     const n2 = +/(\d+)\.xml/.exec(p2)[1]
@@ -67,7 +87,13 @@ async function getContentTypes(zip) {
   }
 }
 
+/**
+ * 获取幻灯片信息
+ * @param {JSZip} zip - JSZip实例
+ * @returns {Promise<{width: number, height: number, defaultTextStyle: any}>} - 幻灯片大小和默认文本样式
+ */
 async function getSlideInfo(zip) {
+  // 读取presentation.xml文件
   const content = await readXmlFile(zip, 'ppt/presentation.xml')
   const sldSzAttrs = content['p:presentation']['p:sldSz']['attrs']
   const defaultTextStyle = content['p:presentation']['p:defaultTextStyle']
@@ -78,11 +104,18 @@ async function getSlideInfo(zip) {
   }
 }
 
+/**
+ * 加载主题
+ * @param {JSZip} zip - JSZip实例
+ * @returns {Promise<any>} - 主题内容
+ */
 async function loadTheme(zip) {
+  // 读取presentation.xml.rels文件
   const preResContent = await readXmlFile(zip, 'ppt/_rels/presentation.xml.rels')
   const relationshipArray = preResContent['Relationships']['Relationship']
   let themeURI
 
+  // 查找主题文件的URI
   if (relationshipArray.constructor === Array) {
     for (const relationshipItem of relationshipArray) {
       if (relationshipItem['attrs']['Type'] === 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme') {
@@ -96,10 +129,20 @@ async function loadTheme(zip) {
   }
   if (!themeURI) throw Error(`Can't open theme file.`)
 
+  // 读取主题文件内容
   return await readXmlFile(zip, 'ppt/' + themeURI)
 }
 
+/**
+ * 处理单个幻灯片
+ * @param {JSZip} zip - JSZip实例
+ * @param {string} sldFileName - 幻灯片文件名
+ * @param {any} themeContent - 主题内容
+ * @param {any} defaultTextStyle - 默认文本样式
+ * @returns {Promise<{fill: string, elements: any[]}>} - 处理后的幻灯片信息
+ */
 async function processSingleSlide(zip, sldFileName, themeContent, defaultTextStyle) {
+  // 读取幻灯片关系文件
   const resName = sldFileName.replace('slides/slide', 'slides/_rels/slide') + '.rels'
   const resContent = await readXmlFile(zip, resName)
   let relationshipArray = resContent['Relationships']['Relationship']
@@ -107,6 +150,7 @@ async function processSingleSlide(zip, sldFileName, themeContent, defaultTextSty
   let diagramFilename = ''
   const slideResObj = {}
 
+  // 处理幻灯片关系
   if (relationshipArray.constructor === Array) {
     for (const relationshipArrayItem of relationshipArray) {
       switch (relationshipArrayItem['attrs']['Type']) {
@@ -134,9 +178,11 @@ async function processSingleSlide(zip, sldFileName, themeContent, defaultTextSty
   } 
   else layoutFilename = relationshipArray['attrs']['Target'].replace('../', 'ppt/')
 
+  // 读取幻灯片布局内容
   const slideLayoutContent = await readXmlFile(zip, layoutFilename)
   const slideLayoutTables = await indexNodes(slideLayoutContent)
 
+  // 读取幻灯片布局关系文件
   const slideLayoutResFilename = layoutFilename.replace('slideLayouts/slideLayout', 'slideLayouts/_rels/slideLayout') + '.rels'
   const slideLayoutResContent = await readXmlFile(zip, slideLayoutResFilename)
   relationshipArray = slideLayoutResContent['Relationships']['Relationship']
@@ -159,10 +205,12 @@ async function processSingleSlide(zip, sldFileName, themeContent, defaultTextSty
   } 
   else masterFilename = relationshipArray['attrs']['Target'].replace('../', 'ppt/')
 
+  // 读取幻灯片母版内容
   const slideMasterContent = await readXmlFile(zip, masterFilename)
   const slideMasterTextStyles = getTextByPathList(slideMasterContent, ['p:sldMaster', 'p:txStyles'])
   const slideMasterTables = indexNodes(slideMasterContent)
 
+  // 读取幻灯片母版关系文件
   const slideMasterResFilename = masterFilename.replace('slideMasters/slideMaster', 'slideMasters/_rels/slideMaster') + '.rels'
   const slideMasterResContent = await readXmlFile(zip, slideMasterResFilename)
   relationshipArray = slideMasterResContent['Relationships']['Relationship']
@@ -184,6 +232,7 @@ async function processSingleSlide(zip, sldFileName, themeContent, defaultTextSty
   }
   else themeFilename = relationshipArray['attrs']['Target'].replace('../', 'ppt/')
 
+  // 处理主题关系
   const themeResObj = {}
   if (themeFilename) {
     const themeName = themeFilename.split('/').pop()
@@ -210,6 +259,7 @@ async function processSingleSlide(zip, sldFileName, themeContent, defaultTextSty
     }
   }
 
+  // 处理图表关系
   const diagramResObj = {}
   let digramFileContent = {}
   if (diagramFilename) {
@@ -241,8 +291,10 @@ async function processSingleSlide(zip, sldFileName, themeContent, defaultTextSty
     }
   }
 
+  // 读取表格样式
   const tableStyles = await readXmlFile(zip, 'ppt/tableStyles.xml')
 
+  // 读取幻灯片内容
   const slideContent = await readXmlFile(zip, sldFileName)
   const nodes = slideContent['p:sld']['p:cSld']['p:spTree']
   const warpObj = {
@@ -266,6 +318,7 @@ async function processSingleSlide(zip, sldFileName, themeContent, defaultTextSty
   // const bgElements = await getBackground(warpObj)
   const bgColor = await getSlideBackgroundFill(warpObj)
 
+  // 处理幻灯片中的所有元素
   const elements = []
   for (const nodeKey in nodes) {
     if (nodes[nodeKey].constructor === Array) {
@@ -331,6 +384,11 @@ async function processSingleSlide(zip, sldFileName, themeContent, defaultTextSty
 //   return elements
 // }
 
+/**
+ * 这个函数用于在内容中索引节点。
+ * @param {Object} content - 要索引的内容。
+ * @returns {Object} - 索引的节点。
+ */
 function indexNodes(content) {
   const keys = Object.keys(content)
   const spTreeNode = content[keys[0]]['p:cSld']['p:spTree']
@@ -370,15 +428,25 @@ function indexNodes(content) {
   return { idTable, idxTable, typeTable }
 }
 
+/**
+ * 这个函数用于处理幻灯片中的节点。
+ * @param {string} nodeKey - 节点的键。
+ * @param {Object} nodeValue - 节点的值。
+ * @param {Object} warpObj - 包含幻灯片内容的对象。
+ * @param {string} source - 节点的来源。
+ * @returns {Object} - 处理后的节点。
+ */
 async function processNodesInSlide(nodeKey, nodeValue, warpObj, source) {
   let json
 
   switch (nodeKey) {
     case 'p:sp': // Shape, Text
       json = processSpNode(nodeValue, warpObj, source)
+      console.log('[processNodesInSlide] p:sp', json)
       break
     case 'p:cxnSp': // Shape, Text
       json = processCxnSpNode(nodeValue, warpObj, source)
+      console.log('[processNodesInSlide] p:cxnSp')
       break
     case 'p:pic': // Image, Video, Audio
       json = processPicNode(nodeValue, warpObj, source)
@@ -398,6 +466,13 @@ async function processNodesInSlide(nodeKey, nodeValue, warpObj, source) {
   return json
 }
 
+/**
+ * 这个函数用于处理组合节点。
+ * @param {Object} node - 组合节点。
+ * @param {Object} warpObj - 包含幻灯片内容的对象。
+ * @param {string} source - 节点的来源。
+ * @returns {Object} - 处理后的组合节点。
+ */
 async function processGroupSpNode(node, warpObj, source) {
   const xfrmNode = getTextByPathList(node, ['p:grpSpPr', 'a:xfrm'])
   if (!xfrmNode) return null
@@ -448,13 +523,27 @@ async function processGroupSpNode(node, warpObj, source) {
   }
 }
 
+/**
+ * 处理幻灯片中的形状节点
+ * @param {Object} node - 形状节点对象
+ * @param {Object} warpObj - 包含幻灯片内容的包装对象
+ * @param {string} source - 节点来源
+ * @returns {Object} 处理后的形状对象
+ */
 function processSpNode(node, warpObj, source) {
+  console.log('[processSpNode] node', node, warpObj.fillColor)
+  // 获取形状名称
   const name = getTextByPathList(node, ['p:nvSpPr', 'p:cNvPr', 'attrs', 'name'])
+  
+  // 获取占位符索引
   const idx = getTextByPathList(node, ['p:nvSpPr', 'p:nvPr', 'p:ph', 'attrs', 'idx'])
+  
+  // 获取占位符类型
   let type = getTextByPathList(node, ['p:nvSpPr', 'p:nvPr', 'p:ph', 'attrs', 'type'])
 
   let slideLayoutSpNode, slideMasterSpNode
 
+  // 根据类型和索引查找对应的布局和母版节点
   if (type) {
     if (idx) {
       slideLayoutSpNode = warpObj['slideLayoutTables']['typeTable'][type]
@@ -470,18 +559,23 @@ function processSpNode(node, warpObj, source) {
     slideMasterSpNode = warpObj['slideMasterTables']['idxTable'][idx]
   }
 
+  // 如果没有类型,尝试确定类型
   if (!type) {
+    // 检查是否为文本框
     const txBoxVal = getTextByPathList(node, ['p:nvSpPr', 'p:cNvSpPr', 'attrs', 'txBox'])
     if (txBoxVal === '1') type = 'text'
   }
+  // 从布局或母版中获取类型
   if (!type) type = getTextByPathList(slideLayoutSpNode, ['p:nvSpPr', 'p:nvPr', 'p:ph', 'attrs', 'type'])
   if (!type) type = getTextByPathList(slideMasterSpNode, ['p:nvSpPr', 'p:nvPr', 'p:ph', 'attrs', 'type'])
 
+  // 如果仍然没有类型,根据来源设置默认类型
   if (!type) {
     if (source === 'diagramBg') type = 'diagram'
     else type = 'obj'
   }
 
+  // 生成并返回形状对象
   return genShape(node, slideLayoutSpNode, slideMasterSpNode, name, type, warpObj)
 }
 
@@ -492,23 +586,41 @@ function processCxnSpNode(node, warpObj) {
   return genShape(node, undefined, undefined, name, type, warpObj)
 }
 
-function genShape(node, slideLayoutSpNode, slideMasterSpNode, name, type, warpObj) {
+/**
+ * 生成形状对象
+ * @param {Object} node - 当前节点
+ * @param {Object} slideLayoutSpNode - 幻灯片布局节点
+ * @param {Object} slideMasterSpNode - 幻灯片母版节点
+ * @param {string} name - 形状名称
+ * @param {string} type - 形状类型
+ * @param {Object} warpObj - 包含幻灯片内容的包装对象
+ * @returns {Object} 生成的形状对象
+ */
+async function genShape(node, slideLayoutSpNode, slideMasterSpNode, name, type, warpObj) {
+  console.log('[genShape] ---name---', name)
+  // 获取变换信息
   const xfrmList = ['p:spPr', 'a:xfrm']
   const slideXfrmNode = getTextByPathList(node, xfrmList)
   const slideLayoutXfrmNode = getTextByPathList(slideLayoutSpNode, xfrmList)
   const slideMasterXfrmNode = getTextByPathList(slideMasterSpNode, xfrmList)
 
+  // 获取形状类型
   const shapType = getTextByPathList(node, ['p:spPr', 'a:prstGeom', 'attrs', 'prst'])
+  console.log('[genShape] shapType', shapType)
   const custShapType = getTextByPathList(node, ['p:spPr', 'a:custGeom'])
 
+  // 获取位置和大小
   const { top, left } = getPosition(slideXfrmNode, slideLayoutXfrmNode, slideMasterXfrmNode)
   const { width, height } = getSize(slideXfrmNode, slideLayoutXfrmNode, slideMasterXfrmNode)
 
+  // 获取翻转信息
   const isFlipV = getTextByPathList(slideXfrmNode, ['attrs', 'flipV']) === '1'
   const isFlipH = getTextByPathList(slideXfrmNode, ['attrs', 'flipH']) === '1'
 
+  // 获取旋转角度
   const rotate = angleToDegrees(getTextByPathList(slideXfrmNode, ['attrs', 'rot']))
 
+  // 获取文本旋转角度
   const txtXframeNode = getTextByPathList(node, ['p:txXfrm'])
   let txtRotate
   if (txtXframeNode) {
@@ -517,19 +629,29 @@ function genShape(node, slideLayoutSpNode, slideMasterSpNode, name, type, warpOb
   } 
   else txtRotate = rotate
 
+  // 生成文本内容
   let content = ''
   if (node['p:txBody']) content = genTextBody(node['p:txBody'], node, slideLayoutSpNode, type, warpObj)
 
+  // 获取边框信息
   const { borderColor, borderWidth, borderType, strokeDasharray } = getBorder(node, type, warpObj)
+  // 获取填充颜色
   const fillColor = getShapeFill(node, undefined, warpObj) || ''
+  // 获取渐变色
+  const gradientFill = await getSlideBackgroundFill(warpObj) || ''
+  console.log('[genShape] gradientFill', gradientFill)
 
+  // 获取阴影信息
   let shadow
   const outerShdwNode = getTextByPathList(node, ['p:spPr', 'a:effectLst', 'a:outerShdw'])
   if (outerShdwNode) shadow = getShadow(outerShdwNode, warpObj)
 
+  // 获取垂直对齐方式
   const vAlign = getVerticalAlign(node, slideLayoutSpNode, slideMasterSpNode, type)
+  // 判断是否为垂直文本
   const isVertical = getTextByPathList(node, ['p:txBody', 'a:bodyPr', 'attrs', 'vert']) === 'eaVert'
 
+  // 构建基本数据对象
   const data = {
     left,
     top,
@@ -548,8 +670,10 @@ function genShape(node, slideLayoutSpNode, slideMasterSpNode, name, type, warpOb
     name,
   }
 
+  // 添加阴影信息（如果存在）
   if (shadow) data.shadow = shadow
 
+  // 处理自定义形状
   if (custShapType && type !== 'diagram') {
     const ext = getTextByPathList(slideXfrmNode, ['a:ext', 'attrs'])
     const w = parseInt(ext['cx']) * RATIO_EMUs_Points
@@ -563,6 +687,7 @@ function genShape(node, slideLayoutSpNode, slideMasterSpNode, name, type, warpOb
       path: d,
     }
   }
+  // 处理预设形状
   if (shapType && (type === 'obj' || !type)) {
     return {
       ...data,
@@ -570,6 +695,7 @@ function genShape(node, slideLayoutSpNode, slideMasterSpNode, name, type, warpOb
       shapType,
     }
   }
+  // 处理文本形状
   return {
     ...data,
     type: 'text',
